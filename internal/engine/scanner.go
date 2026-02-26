@@ -46,30 +46,55 @@ func (s *PortScanner) Scan(ctx context.Context, targets []ScanTarget, resultCh c
 
 	rateLimiter := network.NewRateLimiter(s.config.Rate)
 
-	var wg sync.WaitGroup
 	workerCount := s.config.Concurrency
+	if workerCount <= 0 {
+		workerCount = 10
+	}
 	if workerCount > 500 {
 		workerCount = 500
 	}
 
-	traffic := make(chan ScanTarget, workerCount*2)
+	var wg sync.WaitGroup
 	results := make(chan data.ScanResult, workerCount)
+
+	type scanJob struct {
+		IP   net.IP
+		Port int
+	}
+	jobChan := make(chan scanJob, workerCount*2)
 
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go s.scanWorker(ctx, &wg, traffic, results, rateLimiter, pauseCh, resumeCh, stopCh)
+		go func() {
+			defer wg.Done()
+			for job := range jobChan {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopCh:
+					return
+				default:
+				}
+
+				rateLimiter.Wait()
+				result := s.scanPort(ctx, job.IP, job.Port)
+				select {
+				case results <- result:
+				case <-ctx.Done():
+					return
+				case <-stopCh:
+					return
+				}
+			}
+		}()
 	}
 
 	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	go func() {
+		defer close(jobChan)
 		for _, target := range targets {
 			for _, port := range target.Ports {
 				select {
-				case traffic <- ScanTarget{IP: target.IP, Ports: []int{port}}:
+				case jobChan <- scanJob{IP: target.IP, Port: port}:
 				case <-stopCh:
 					return
 				case <-ctx.Done():
@@ -77,7 +102,11 @@ func (s *PortScanner) Scan(ctx context.Context, targets []ScanTarget, resultCh c
 				}
 			}
 		}
-		close(traffic)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
 	}()
 
 	batch := make([]data.ScanResult, 0, 100)
@@ -106,31 +135,6 @@ func (s *PortScanner) Scan(ctx context.Context, targets []ScanTarget, resultCh c
 	}
 
 	return nil
-}
-
-func (s *PortScanner) scanWorker(ctx context.Context, wg *sync.WaitGroup, traffic <-chan ScanTarget, results chan<- data.ScanResult, rateLimiter *network.RateLimiter, pauseCh, resumeCh, stopCh chan struct{}) {
-	defer wg.Done()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-stopCh:
-			return
-		case <-pauseCh:
-			<-resumeCh
-		case target, ok := <-traffic:
-			if !ok {
-				return
-			}
-
-			rateLimiter.Wait()
-
-			port := target.Ports[0]
-			result := s.scanPort(ctx, target.IP, port)
-			results <- result
-		}
-	}
 }
 
 func (s *PortScanner) scanPort(ctx context.Context, ip net.IP, port int) data.ScanResult {

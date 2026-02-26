@@ -229,13 +229,18 @@ func (s *Scheduler) monitorStatus() {
 		case <-ticker.C:
 			s.mu.RLock()
 			elapsed := time.Since(s.status.StartTime)
-			if s.status.ScannedPorts > 0 {
+			s.status.CurrentRate = 0
+			s.status.EstimatedEnd = time.Time{}
+
+			if s.status.ScannedPorts > 0 && elapsed.Seconds() > 0 {
 				rate := float64(s.status.ScannedPorts) / elapsed.Seconds()
 				s.status.CurrentRate = int(rate)
 
-				if s.status.TotalPorts > 0 {
+				if s.status.TotalPorts > 0 && rate > 0 {
 					remaining := float64(s.status.TotalPorts-s.status.ScannedPorts) / rate
-					s.status.EstimatedEnd = time.Now().Add(time.Duration(remaining) * time.Second)
+					if remaining > 0 {
+						s.status.EstimatedEnd = time.Now().Add(time.Duration(remaining) * time.Second)
+					}
 				}
 			}
 
@@ -244,9 +249,13 @@ func (s *Scheduler) monitorStatus() {
 				progress = float64(s.status.ScannedPorts) / float64(s.status.TotalPorts) * 100
 			}
 
-			fmt.Printf("\r[进度] %.1f%% | 已扫描: %d/%d 端口 | 速率: %d PPS | 预计剩余: %s",
-				progress, s.status.ScannedPorts, s.status.TotalPorts, s.status.CurrentRate,
-				time.Until(s.status.EstimatedEnd).Round(time.Second))
+			remainingStr := "计算中..."
+			if !s.status.EstimatedEnd.IsZero() {
+				remainingStr = time.Until(s.status.EstimatedEnd).Round(time.Second).String()
+			}
+
+			fmt.Printf("\r[进度] %.1f%% | 已扫描: %d/%d 端口 | 速率: %d PPS | 预计剩余: %s  ",
+				progress, s.status.ScannedPorts, s.status.TotalPorts, s.status.CurrentRate, remainingStr)
 			s.mu.RUnlock()
 
 		case <-s.stopCh:

@@ -44,7 +44,6 @@ func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.
 		return hosts, nil
 	}
 
-	resultCh := make(chan data.HostInfo, 1000)
 	workerCount := d.config.Concurrency
 	if workerCount <= 0 {
 		workerCount = 10
@@ -54,27 +53,41 @@ func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.
 	}
 
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, workerCount)
+	resultCh := make(chan *data.HostInfo, workerCount)
+
+	ipChan := make(chan net.IP, workerCount*2)
 
 	go func() {
 		for _, ip := range allIPs {
 			select {
+			case ipChan <- ip:
 			case <-ctx.Done():
 				return
-			default:
-				wg.Add(1)
-				sem <- struct{}{}
-				go func(targetIP net.IP) {
-					defer wg.Done()
-					defer func() { <-sem }()
-
-					if host := d.probeHost(ctx, targetIP); host != nil {
-						resultCh <- *host
-					}
-				}(ip)
 			}
 		}
+		close(ipChan)
 	}()
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ip := range ipChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					if host := d.probeHost(ctx, ip); host != nil {
+						select {
+						case resultCh <- host:
+						case <-ctx.Done():
+							return
+						}
+					}
+				}
+			}
+		}()
+	}
 
 	go func() {
 		wg.Wait()
@@ -83,7 +96,7 @@ func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.
 
 	for host := range resultCh {
 		mu.Lock()
-		hosts = append(hosts, host)
+		hosts = append(hosts, *host)
 		mu.Unlock()
 	}
 
@@ -97,6 +110,12 @@ func (d *DiscoveryEngine) probeHost(ctx context.Context, ip net.IP) *data.HostIn
 	}
 
 	for _, method := range methods {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
 		var host *data.HostInfo
 		var err error
 
