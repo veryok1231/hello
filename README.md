@@ -74,10 +74,10 @@ sudo make install
 **方式二：直接下载**
 
 ```bash
-# 下载预编译二进制
-wget https://github.com/veryok1231/hello/releases/latest/download/probe-linux-amd64
-chmod +x probe-linux-amd64
-sudo mv probe-linux-amd64 /usr/local/bin/probe
+# linux可直接下载预编译二进制
+wget https://github.com/veryok1231/hello/probe
+chmod +x probe
+sudo mv probe /usr/local/bin/probe
 ```
 
 ### 验证安装
