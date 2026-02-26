@@ -6,8 +6,7 @@ import (
 
 type RateLimiter struct {
 	interval time.Duration
-	ticker   *time.Ticker
-	stopCh   chan struct{}
+	lastTime time.Time
 }
 
 func NewRateLimiter(pps int) *RateLimiter {
@@ -20,38 +19,27 @@ func NewRateLimiter(pps int) *RateLimiter {
 	}
 	return &RateLimiter{
 		interval: interval,
-		ticker:   time.NewTicker(interval),
-		stopCh:   make(chan struct{}),
+		lastTime: time.Now().Add(-time.Second),
 	}
 }
 
 func (r *RateLimiter) Wait() {
-	if r.ticker == nil {
-		return
+	now := time.Now()
+	next := r.lastTime.Add(r.interval)
+	if next.After(now) {
+		time.Sleep(next.Sub(now))
 	}
-	<-r.ticker.C
+	r.lastTime = time.Now()
 }
 
 func (r *RateLimiter) SetRate(pps int) {
 	if pps <= 0 {
 		return
 	}
-	if r.ticker != nil {
-		r.ticker.Stop()
-	}
 	r.interval = time.Second / time.Duration(pps)
-	r.ticker = time.NewTicker(r.interval)
 }
 
 func (r *RateLimiter) Stop() {
-	if r.ticker != nil {
-		r.ticker.Stop()
-	}
-	select {
-	case <-r.stopCh:
-	default:
-		close(r.stopCh)
-	}
 }
 
 type TokenBucket struct {

@@ -13,21 +13,18 @@ import (
 )
 
 type DiscoveryEngine struct {
-	config    *Config
-	socket    *network.RawSocket
-	rateLimit *network.RateLimiter
+	config *Config
+	socket *network.RawSocket
 }
 
 func NewDiscoveryEngine(config *Config) *DiscoveryEngine {
 	return &DiscoveryEngine{
-		config:    config,
-		rateLimit: network.NewRateLimiter(config.Rate),
+		config: config,
 	}
 }
 
 func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.HostInfo, error) {
 	var hosts []data.HostInfo
-	var mu sync.Mutex
 
 	var allIPs []net.IP
 	for _, cidr := range cidrs {
@@ -46,98 +43,66 @@ func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.
 
 	workerCount := d.config.Concurrency
 	if workerCount <= 0 {
-		workerCount = 10
+		workerCount = 50
 	}
-	if workerCount > 100 {
-		workerCount = 100
+	if workerCount > 200 {
+		workerCount = 200
 	}
 
+	var mu sync.Mutex
 	var wg sync.WaitGroup
-	resultCh := make(chan *data.HostInfo, workerCount)
 
-	ipChan := make(chan net.IP, workerCount*2)
+	sem := make(chan struct{}, workerCount)
 
-	go func() {
-		for _, ip := range allIPs {
-			select {
-			case ipChan <- ip:
-			case <-ctx.Done():
-				return
-			}
-		}
-		close(ipChan)
-	}()
+	fmt.Printf("[DEBUG] 使用 %d 个工作线程\n", workerCount)
 
-	for i := 0; i < workerCount; i++ {
+	start := time.Now()
+	for _, ip := range allIPs {
 		wg.Add(1)
-		go func() {
+		sem <- struct{}{}
+
+		go func(targetIP net.IP) {
 			defer wg.Done()
-			for ip := range ipChan {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					if host := d.probeHost(ctx, ip); host != nil {
-						select {
-						case resultCh <- host:
-						case <-ctx.Done():
-							return
-						}
-					}
-				}
+			defer func() { <-sem }()
+
+			if host := d.probeHost(targetIP); host != nil {
+				mu.Lock()
+				hosts = append(hosts, *host)
+				mu.Unlock()
 			}
-		}()
+		}(ip)
 	}
 
-	go func() {
-		wg.Wait()
-		close(resultCh)
-	}()
-
-	for host := range resultCh {
-		mu.Lock()
-		hosts = append(hosts, *host)
-		mu.Unlock()
-	}
+	wg.Wait()
+	elapsed := time.Since(start)
+	fmt.Printf("[DEBUG] 扫描完成，耗时: %v\n", elapsed)
 
 	return hosts, nil
 }
 
-func (d *DiscoveryEngine) probeHost(ctx context.Context, ip net.IP) *data.HostInfo {
-	methods := d.config.DiscoveryMethods
-	if len(methods) == 0 {
-		methods = []string{"icmp", "tcp"}
+func (d *DiscoveryEngine) probeHost(ip net.IP) *data.HostInfo {
+	probePorts := []int{22, 80, 443, 8080}
+	timeout := d.config.Timeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
 	}
 
-	for _, method := range methods {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
-		var host *data.HostInfo
-		var err error
-
-		switch method {
-		case "icmp":
-			host, err = d.probeICMP(ctx, ip)
-		case "tcp":
-			host, err = d.probeTCP(ctx, ip)
-		case "arp":
-			host, err = d.probeARP(ctx, ip)
-		}
-
-		if err == nil && host != nil {
-			return host
+	for _, port := range probePorts {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", ip.String(), port), timeout)
+		if err == nil {
+			conn.Close()
+			return &data.HostInfo{
+				IP:           ip,
+				DiscoveryWay: "tcp",
+				TTL:          64,
+			}
 		}
 	}
+
 	return nil
 }
 
 func (d *DiscoveryEngine) probeICMP(ctx context.Context, ip net.IP) (*data.HostInfo, error) {
-	d.rateLimit.Wait()
-
 	start := time.Now()
 	resp, err := network.SendICMPProbe(ip, d.config.Timeout)
 	if err != nil {
@@ -152,12 +117,13 @@ func (d *DiscoveryEngine) probeICMP(ctx context.Context, ip net.IP) (*data.HostI
 	}, nil
 }
 
-func (d *DiscoveryEngine) probeTCP(ctx context.Context, ip net.IP) (*data.HostInfo, error) {
-	probePorts := []int{80, 443, 22, 3389, 8080}
+func (d *DiscoveryEngine) probeTCP(ctx context.Context, ip net.IP) *data.HostInfo {
+	probePorts := []int{80, 443, 22, 8080}
+	openCount := 0
+	closedCount := 0
+	var firstOpenHost *data.HostInfo
 
 	for _, port := range probePorts {
-		d.rateLimit.Wait()
-
 		start := time.Now()
 		resp, err := network.SendSYNProbe(ip, port, d.config.Timeout)
 		if err != nil {
@@ -165,24 +131,40 @@ func (d *DiscoveryEngine) probeTCP(ctx context.Context, ip net.IP) (*data.HostIn
 		}
 
 		if resp.Open {
-			return &data.HostInfo{
-				IP:           ip,
-				DiscoveryWay: "tcp",
-				TTL:          resp.TTL,
-				RespondTime:  time.Since(start),
-			}, nil
+			openCount++
+			if firstOpenHost == nil {
+				firstOpenHost = &data.HostInfo{
+					IP:           ip,
+					DiscoveryWay: "tcp",
+					TTL:          resp.TTL,
+					RespondTime:  time.Since(start),
+				}
+			}
+		} else if resp.Closed {
+			closedCount++
 		}
 	}
 
-	return nil, fmt.Errorf("no response")
+	if openCount >= 1 {
+		return firstOpenHost
+	}
+
+	if closedCount >= 2 {
+		return &data.HostInfo{
+			IP:           ip,
+			DiscoveryWay: "tcp-closed",
+			TTL:          64,
+			RespondTime:  0,
+		}
+	}
+
+	return nil
 }
 
 func (d *DiscoveryEngine) probeARP(ctx context.Context, ip net.IP) (*data.HostInfo, error) {
 	if !ip.IsPrivate() && !ip.IsLoopback() {
 		return nil, fmt.Errorf("ARP only works on local network")
 	}
-
-	d.rateLimit.Wait()
 
 	start := time.Now()
 	resp, err := network.SendARPProbe(ip, d.config.Timeout)

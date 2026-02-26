@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -77,10 +78,11 @@ type ICMPResponse struct {
 }
 
 type TCPResponse struct {
-	Open   bool
-	Closed bool
-	TTL    int
-	Banner []byte
+	Open     bool
+	Closed   bool
+	Filtered bool
+	TTL      int
+	Banner   []byte
 }
 
 type ARPResponse struct {
@@ -158,29 +160,30 @@ func checksum(data []byte) uint16 {
 }
 
 func SendSYNProbe(dstIP net.IP, dstPort int, timeout time.Duration) (*TCPResponse, error) {
-	start := time.Now()
-
 	dialer := net.Dialer{Timeout: timeout}
 	conn, err := dialer.Dial("tcp", fmt.Sprintf("%s:%d", dstIP.String(), dstPort))
+
 	if err != nil {
 		if opErr, ok := err.(*net.OpError); ok {
 			if opErr.Timeout() {
-				return nil, fmt.Errorf("连接超时")
+				return &TCPResponse{Filtered: true}, nil
+			}
+			if strings.Contains(opErr.Error(), "connection refused") {
+				return &TCPResponse{Closed: true}, nil
+			}
+			if strings.Contains(opErr.Error(), "network is unreachable") ||
+				strings.Contains(opErr.Error(), "no route to host") ||
+				strings.Contains(opErr.Error(), "host is down") {
+				return nil, fmt.Errorf("network unreachable")
 			}
 		}
-		return &TCPResponse{Closed: true, TTL: 64}, nil
+		return nil, err
 	}
 	defer conn.Close()
 
-	elapsed := time.Since(start)
-	estimatedTTL := 64 - int(elapsed.Milliseconds()/10)
-	if estimatedTTL < 1 {
-		estimatedTTL = 1
-	}
-
 	return &TCPResponse{
 		Open: true,
-		TTL:  estimatedTTL,
+		TTL:  64,
 	}, nil
 }
 
