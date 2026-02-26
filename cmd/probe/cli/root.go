@@ -77,30 +77,27 @@ func initConfig() {
 
 func initScanFlags() {
 	scanCmd.Flags().StringSliceP("target", "t", []string{}, "目标网络范围 (CIDR格式，支持多个)")
-	scanCmd.Flags().StringP("ports", "p", "1-65535", "端口范围 (如: 1-1000, 80,443,8080)")
+	scanCmd.Flags().StringP("list", "l", "", "IP列表文件路径，每行一个IP或CIDR")
+	scanCmd.Flags().StringP("ports", "p", "top100", "端口范围 (top100/all/1-1000/80,443)")
 	scanCmd.Flags().IntP("rate", "r", 10000, "发包速率 (PPS)")
 	scanCmd.Flags().IntP("concurrency", "c", 1000, "并发数")
 	scanCmd.Flags().Duration("timeout", 3*time.Second, "响应超时时间")
 	scanCmd.Flags().StringP("output", "o", "result.json", "输出文件路径")
 	scanCmd.Flags().StringP("format", "f", "json", "输出格式 (json/csv/xml)")
 	scanCmd.Flags().Bool("resume", false, "恢复上次扫描")
-	scanCmd.Flags().String("scan-type", "full", "扫描类型 (full/quick/custom)")
 	scanCmd.Flags().StringP("interface", "i", "", "网络接口")
 	scanCmd.Flags().Bool("service-detection", true, "是否进行服务识别")
 	scanCmd.Flags().Bool("proxy-detection", true, "是否进行代答检测")
-
-	_ = scanCmd.MarkFlagRequired("target")
 }
 
 func initDiscoverFlags() {
 	discoverCmd.Flags().StringSliceP("target", "t", []string{}, "目标网络范围 (CIDR格式，支持多个)")
+	discoverCmd.Flags().StringP("list", "l", "", "IP列表文件路径，每行一个IP或CIDR")
 	discoverCmd.Flags().IntP("rate", "r", 10000, "发包速率 (PPS)")
 	discoverCmd.Flags().Duration("timeout", 3*time.Second, "响应超时时间")
 	discoverCmd.Flags().StringP("output", "o", "hosts.json", "输出文件路径")
 	discoverCmd.Flags().StringP("interface", "i", "", "网络接口")
-	discoverCmd.Flags().StringSlice("method", []string{"icmp", "tcp"}, "发现方法 (icmp/tcp/arp)")
-
-	_ = discoverCmd.MarkFlagRequired("target")
+	discoverCmd.Flags().StringSlice("method", []string{"tcp"}, "发现方法 (icmp/tcp/arp)")
 }
 
 func initAnalyzeFlags() {
@@ -110,8 +107,40 @@ func initAnalyzeFlags() {
 	analyzeCmd.Flags().Int("ttl-threshold", 3, "TTL差异阈值")
 }
 
-func runScan(cmd *cobra.Command, args []string) {
+func resolveTargets(cmd *cobra.Command) ([]string, error) {
+	var allTargets []string
+
+	// 从 -t 参数获取
 	targets, _ := cmd.Flags().GetStringSlice("target")
+	allTargets = append(allTargets, targets...)
+
+	// 从 -l 文件获取
+	listFile, _ := cmd.Flags().GetString("list")
+	if listFile != "" {
+		ips, err := utils.LoadIPsFromFile(listFile)
+		if err != nil {
+			return nil, fmt.Errorf("加载IP列表失败: %w", err)
+		}
+		fmt.Printf("[INFO] 从文件加载 %d 个IP\n", len(ips))
+		for _, ip := range ips {
+			allTargets = append(allTargets, ip.String())
+		}
+	}
+
+	if len(allTargets) == 0 {
+		return nil, fmt.Errorf("请指定目标 (-t 或 -l)")
+	}
+
+	return allTargets, nil
+}
+
+func runScan(cmd *cobra.Command, args []string) {
+	targets, err := resolveTargets(cmd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
+		os.Exit(1)
+	}
+
 	ports, _ := cmd.Flags().GetString("ports")
 	rate, _ := cmd.Flags().GetInt("rate")
 	concurrency, _ := cmd.Flags().GetInt("concurrency")
@@ -119,16 +148,20 @@ func runScan(cmd *cobra.Command, args []string) {
 	output, _ := cmd.Flags().GetString("output")
 	format, _ := cmd.Flags().GetString("format")
 	resume, _ := cmd.Flags().GetBool("resume")
-	scanType, _ := cmd.Flags().GetString("scan-type")
 	iface, _ := cmd.Flags().GetString("interface")
 	serviceDetection, _ := cmd.Flags().GetBool("service-detection")
 	proxyDetection, _ := cmd.Flags().GetBool("proxy-detection")
 
+	// 验证目标大小
 	maxIPs := 2 << 23
 	if err := utils.ValidateTargetSize(targets, maxIPs); err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
 		os.Exit(1)
 	}
+
+	// 解析端口
+	portList := utils.ParsePortRange(ports)
+	fmt.Printf("[INFO] 端口: %s (%d 个端口)\n", ports, len(portList))
 
 	config = &engine.Config{
 		Targets:          targets,
@@ -139,11 +172,11 @@ func runScan(cmd *cobra.Command, args []string) {
 		OutputFile:       output,
 		OutputFormat:     format,
 		Resume:           resume,
-		ScanType:         scanType,
 		Interface:        iface,
 		ServiceDetection: serviceDetection,
 		ProxyDetection:   proxyDetection,
 	}
+	config.ApplyDefaults()
 
 	scheduler := engine.NewScheduler(config)
 	if err := scheduler.Start(); err != nil {
@@ -153,7 +186,12 @@ func runScan(cmd *cobra.Command, args []string) {
 }
 
 func runDiscover(cmd *cobra.Command, args []string) {
-	targets, _ := cmd.Flags().GetStringSlice("target")
+	targets, err := resolveTargets(cmd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
+		os.Exit(1)
+	}
+
 	rate, _ := cmd.Flags().GetInt("rate")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	output, _ := cmd.Flags().GetString("output")
@@ -169,6 +207,7 @@ func runDiscover(cmd *cobra.Command, args []string) {
 		DiscoveryOnly:    true,
 		DiscoveryMethods: methods,
 	}
+	config.ApplyDefaults()
 
 	discovery := engine.NewDiscoveryEngine(config)
 	if err := discovery.Run(); err != nil {

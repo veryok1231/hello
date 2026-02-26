@@ -1,52 +1,51 @@
 package utils
 
 import (
+	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
 
-func ParseCIDR(cidr string) ([]net.IP, error) {
-	_, ipnet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid CIDR format: %w", err)
-	}
-
-	ones, bits := ipnet.Mask.Size()
-	totalIPs := 1 << (bits - ones)
-
-	maxIPs := 2 << 23
-	if totalIPs > maxIPs {
-		return nil, fmt.Errorf("CIDR range too large (max /9 for two A segments), got %d IPs", totalIPs)
-	}
-
-	var ips []net.IP
-	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIP(ip) {
-		newIP := make(net.IP, len(ip))
-		copy(newIP, ip)
-		ips = append(ips, newIP)
-	}
-
-	if len(ips) > 2 {
-		ips = ips[1 : len(ips)-1]
-	}
-
-	return ips, nil
+// Top100Ports 常用Top 100端口列表
+var Top100Ports = []int{
+	// Web服务
+	80, 443, 8080, 8443, 8000, 8888, 9000, 3000, 5000, 4000,
+	// 远程访问
+	22, 23, 3389, 5900, 5901, 5902, 5800, 5801,
+	// 文件服务
+	21, 20, 69, 445, 139, 138, 137, 873, 2049,
+	// 邮件服务
+	25, 110, 143, 993, 995, 587, 465, 2525,
+	// 数据库
+	3306, 1433, 1521, 5432, 6379, 27017, 9200, 9042, 5984, 7000, 7001,
+	// DNS/DHCP
+	53, 67, 68, 5353,
+	// 其他常用
+	111, 135, 139, 161, 162, 389, 636, 646, 860, 1099,
+	1080, 1434, 1723, 1883, 2181, 2375, 2376, 3307, 4444,
+	4505, 4506, 464, 465, 4949, 500, 502, 504, 514, 515,
+	520, 543, 631, 639, 646, 691, 767, 768, 8291, 8292,
+	8400, 8401, 8402, 8530, 8531, 8883, 9001, 9090, 9091,
+	9999, 10000, 10001, 10050, 10051, 11211, 11214, 123,
 }
 
-func incIP(ip net.IP) {
-	for j := len(ip) - 1; j >= 0; j-- {
-		ip[j]++
-		if ip[j] > 0 {
-			break
-		}
-	}
-}
-
+// ParsePortRange 解析端口范围字符串
 func ParsePortRange(portStr string) []int {
 	if portStr == "" {
-		portStr = "1-65535"
+		return GetTop100Ports()
+	}
+
+	portStr = strings.ToLower(strings.TrimSpace(portStr))
+
+	if portStr == "all" || portStr == "full" {
+		return GetAllPorts()
+	}
+
+	if portStr == "top100" || portStr == "top" {
+		return GetTop100Ports()
 	}
 
 	var ports []int
@@ -92,10 +91,130 @@ func ParsePortRange(portStr string) []int {
 	}
 
 	if len(ports) == 0 {
-		ports = []int{80, 443, 22, 3389, 8080}
+		return GetTop100Ports()
 	}
 
 	return ports
+}
+
+// GetTop100Ports 返回Top 100端口列表
+func GetTop100Ports() []int {
+	result := make([]int, len(Top100Ports))
+	copy(result, Top100Ports)
+	return result
+}
+
+// GetAllPorts 返回全端口1-65535
+func GetAllPorts() []int {
+	ports := make([]int, 65535)
+	for i := 1; i <= 65535; i++ {
+		ports[i-1] = i
+	}
+	return ports
+}
+
+// ParseIPList 从文件或字符串解析IP列表
+func ParseIPList(input string) ([]net.IP, error) {
+	// 检查是否是文件路径
+	if _, err := os.Stat(input); err == nil {
+		return LoadIPsFromFile(input)
+	}
+
+	// 尝试解析为IP/CIDR
+	if strings.Contains(input, "/") {
+		return ParseCIDR(input)
+	}
+
+	if strings.Contains(input, "-") {
+		return ParseIPRange(input)
+	}
+
+	// 尝试解析为单个IP
+	ip := net.ParseIP(strings.TrimSpace(input))
+	if ip != nil {
+		return []net.IP{ip}, nil
+	}
+
+	return nil, fmt.Errorf("invalid IP input: %s", input)
+}
+
+// LoadIPsFromFile 从文件加载IP列表
+func LoadIPsFromFile(filePath string) ([]net.IP, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("打开文件失败: %w", err)
+	}
+	defer file.Close()
+
+	var ips []net.IP
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+
+		// 跳过空行和注释
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		// 解析IP/CIDR/Range
+		parsedIPs, err := ParseIPList(line)
+		if err != nil {
+			// 如果解析失败，尝试作为单个IP处理
+			ip := net.ParseIP(line)
+			if ip != nil {
+				ips = append(ips, ip)
+				continue
+			}
+			return nil, fmt.Errorf("第%d行解析失败: %w", lineNum, err)
+		}
+		ips = append(ips, parsedIPs...)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("读取文件失败: %w", err)
+	}
+
+	return ips, nil
+}
+
+func ParseCIDR(cidr string) ([]net.IP, error) {
+	_, ipnet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid CIDR format: %w", err)
+	}
+
+	ones, bits := ipnet.Mask.Size()
+	totalIPs := 1 << (bits - ones)
+
+	maxIPs := 2 << 23
+	if totalIPs > maxIPs {
+		return nil, fmt.Errorf("CIDR range too large (max /9 for two A segments), got %d IPs", totalIPs)
+	}
+
+	var ips []net.IP
+	for ip := ipnet.IP.Mask(ipnet.Mask); ipnet.Contains(ip); incIP(ip) {
+		newIP := make(net.IP, len(ip))
+		copy(newIP, ip)
+		ips = append(ips, newIP)
+	}
+
+	if len(ips) > 2 {
+		ips = ips[1 : len(ips)-1]
+	}
+
+	return ips, nil
+}
+
+func incIP(ip net.IP) {
+	for j := len(ip) - 1; j >= 0; j-- {
+		ip[j]++
+		if ip[j] > 0 {
+			break
+		}
+	}
 }
 
 func ParseIPRange(ipRange string) ([]net.IP, error) {

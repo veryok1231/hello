@@ -72,6 +72,7 @@ func (s *Scheduler) Start() error {
 	s.status.TotalHosts = len(hosts)
 	ports := utils.ParsePortRange(s.config.PortRange)
 	s.status.TotalPorts = len(hosts) * len(ports)
+	fmt.Printf("[INFO] 扫描 %d 个端口\n", len(ports))
 
 	fmt.Printf("[INFO] 开始端口扫描...\n")
 	results, err := s.scanPorts(ctx, hosts, ports)

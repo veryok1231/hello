@@ -23,14 +23,14 @@ func NewDiscoveryEngine(config *Config) *DiscoveryEngine {
 	}
 }
 
-func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.HostInfo, error) {
+func (d *DiscoveryEngine) Discover(ctx context.Context, targets []string) ([]data.HostInfo, error) {
 	var hosts []data.HostInfo
 
 	var allIPs []net.IP
-	for _, cidr := range cidrs {
-		ips, err := utils.ParseCIDR(cidr)
+	for _, target := range targets {
+		ips, err := utils.ParseIPList(target)
 		if err != nil {
-			return nil, fmt.Errorf("解析CIDR失败 %s: %w", cidr, err)
+			return nil, fmt.Errorf("解析目标失败 %s: %w", target, err)
 		}
 		allIPs = append(allIPs, ips...)
 	}
