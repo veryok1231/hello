@@ -82,8 +82,8 @@ func initScanFlags() {
 	scanCmd.Flags().IntP("rate", "r", 10000, "发包速率 (PPS)")
 	scanCmd.Flags().IntP("concurrency", "c", 1000, "并发数")
 	scanCmd.Flags().Duration("timeout", 3*time.Second, "响应超时时间")
-	scanCmd.Flags().StringP("output", "o", "result.json", "输出文件路径")
-	scanCmd.Flags().StringP("format", "f", "json", "输出格式 (json/csv/xml)")
+	scanCmd.Flags().StringP("output", "o", "result.txt", "输出文件路径")
+	scanCmd.Flags().StringP("format", "f", "txt", "输出格式 (txt/json/csv/xml/md)")
 	scanCmd.Flags().Bool("resume", false, "恢复上次扫描")
 	scanCmd.Flags().StringP("interface", "i", "", "网络接口")
 	scanCmd.Flags().Bool("service-detection", true, "是否进行服务识别")
@@ -95,7 +95,8 @@ func initDiscoverFlags() {
 	discoverCmd.Flags().StringP("list", "l", "", "IP列表文件路径，每行一个IP或CIDR")
 	discoverCmd.Flags().IntP("rate", "r", 10000, "发包速率 (PPS)")
 	discoverCmd.Flags().Duration("timeout", 3*time.Second, "响应超时时间")
-	discoverCmd.Flags().StringP("output", "o", "hosts.json", "输出文件路径")
+	discoverCmd.Flags().StringP("output", "o", "hosts.txt", "输出文件路径")
+	discoverCmd.Flags().StringP("format", "f", "txt", "输出格式 (txt/json/csv)")
 	discoverCmd.Flags().StringP("interface", "i", "", "网络接口")
 	discoverCmd.Flags().StringSlice("method", []string{"tcp"}, "发现方法 (icmp/tcp/arp)")
 }
@@ -195,6 +196,7 @@ func runDiscover(cmd *cobra.Command, args []string) {
 	rate, _ := cmd.Flags().GetInt("rate")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	output, _ := cmd.Flags().GetString("output")
+	format, _ := cmd.Flags().GetString("format")
 	iface, _ := cmd.Flags().GetString("interface")
 	methods, _ := cmd.Flags().GetStringSlice("method")
 
@@ -203,6 +205,7 @@ func runDiscover(cmd *cobra.Command, args []string) {
 		Rate:             rate,
 		Timeout:          timeout,
 		OutputFile:       output,
+		OutputFormat:     format,
 		Interface:        iface,
 		DiscoveryOnly:    true,
 		DiscoveryMethods: methods,

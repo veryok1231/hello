@@ -190,8 +190,22 @@ func (d *DiscoveryEngine) Run() error {
 
 	fmt.Printf("[INFO] 发现 %d 个存活主机\n", len(hosts))
 
-	for _, h := range hosts {
-		fmt.Printf("  %s (%s) TTL: %d\n", h.IP, h.DiscoveryWay, h.TTL)
+	if len(hosts) > 0 && len(hosts) <= 20 {
+		for _, h := range hosts {
+			fmt.Printf("  %s (%s) TTL: %d\n", h.IP, h.DiscoveryWay, h.TTL)
+		}
+	}
+
+	// 保存结果
+	if d.config.OutputFile != "" {
+		storage, err := data.NewStorage(d.config.OutputFile)
+		if err != nil {
+			return fmt.Errorf("创建存储失败: %w", err)
+		}
+		if err := storage.SaveHosts(hosts, d.config.OutputFormat); err != nil {
+			return fmt.Errorf("保存结果失败: %w", err)
+		}
+		fmt.Printf("[INFO] 结果已保存到: %s\n", d.config.OutputFile)
 	}
 
 	return nil
