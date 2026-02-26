@@ -1,0 +1,31 @@
+scan:
+  default_rate: 10000
+  max_rate: 100000
+  default_timeout: 3s
+  max_concurrent: 5000
+
+discovery:
+  methods:
+    - icmp
+    - arp
+    - tcp_syn
+  tcp_probe_ports:
+    - 80
+    - 443
+    - 22
+    - 3389
+
+service:
+  probe_timeout: 5s
+  max_probes: 10
+  fingerprint_db: ./data/nmap-service-probes
+
+proxy_detection:
+  subnet_threshold: 254
+  ttl_diff_threshold: 3
+  confidence_threshold: 0.5
+
+output:
+  default_format: json
+  include_raw_banner: true
+  pretty_print: false
