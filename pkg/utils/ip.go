@@ -360,3 +360,137 @@ func ValidateTargetSize(targets []string, maxSize int) error {
 
 	return nil
 }
+
+// Whitelist 白名单结构
+type Whitelist struct {
+	ips  map[string]bool
+	nets []*net.IPNet
+}
+
+// NewWhitelist 创建白名单
+func NewWhitelist() *Whitelist {
+	return &Whitelist{
+		ips:  make(map[string]bool),
+		nets: make([]*net.IPNet, 0),
+	}
+}
+
+// LoadFromFile 从文件加载白名单
+func (w *Whitelist) LoadFromFile(filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("打开白名单文件失败: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+
+		// 跳过空行和注释
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		if err := w.Add(line); err != nil {
+			return fmt.Errorf("第%d行解析失败: %w", lineNum, err)
+		}
+	}
+
+	return scanner.Err()
+}
+
+// Add 添加IP或CIDR到白名单
+func (w *Whitelist) Add(entry string) error {
+	entry = strings.TrimSpace(entry)
+
+	// CIDR格式
+	if strings.Contains(entry, "/") {
+		_, ipnet, err := net.ParseCIDR(entry)
+		if err != nil {
+			return fmt.Errorf("invalid CIDR: %s", entry)
+		}
+		w.nets = append(w.nets, ipnet)
+		return nil
+	}
+
+	// 单个IP
+	ip := net.ParseIP(entry)
+	if ip == nil {
+		return fmt.Errorf("invalid IP: %s", entry)
+	}
+	w.ips[ip.String()] = true
+	return nil
+}
+
+// AddMultiple 批量添加
+func (w *Whitelist) AddMultiple(entries []string) error {
+	for _, entry := range entries {
+		if err := w.Add(entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Contains 检查IP是否在白名单中
+func (w *Whitelist) Contains(ip net.IP) bool {
+	// 检查单个IP
+	if w.ips[ip.String()] {
+		return true
+	}
+
+	// 检查CIDR
+	for _, ipnet := range w.nets {
+		if ipnet.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Size 返回白名单大小
+func (w *Whitelist) Size() int {
+	return len(w.ips) + len(w.nets)
+}
+
+// FilterIPs 过滤掉白名单中的IP
+func (w *Whitelist) FilterIPs(ips []net.IP) ([]net.IP, int) {
+	var filtered []net.IP
+	skipped := 0
+
+	for _, ip := range ips {
+		if w.Contains(ip) {
+			skipped++
+			continue
+		}
+		filtered = append(filtered, ip)
+	}
+
+	return filtered, skipped
+}
+
+// LoadWhitelist 从参数或文件加载白名单
+func LoadWhitelist(whitelist []string, whitelistFile string) (*Whitelist, error) {
+	w := NewWhitelist()
+
+	// 从文件加载
+	if whitelistFile != "" {
+		if err := w.LoadFromFile(whitelistFile); err != nil {
+			return nil, err
+		}
+	}
+
+	// 从参数加载
+	if len(whitelist) > 0 {
+		if err := w.AddMultiple(whitelist); err != nil {
+			return nil, err
+		}
+	}
+
+	return w, nil
+}

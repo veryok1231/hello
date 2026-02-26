@@ -18,6 +18,7 @@ type Scheduler struct {
 	serviceDet    *ServiceDetector
 	proxyAnalyzer *ProxyAnalyzer
 	storage       *data.Storage
+	whitelist     *utils.Whitelist
 
 	status   ScanStatus
 	pauseCh  chan struct{}
@@ -36,6 +37,10 @@ func NewScheduler(config *Config) *Scheduler {
 		resumeCh: make(chan struct{}),
 		stopCh:   make(chan struct{}),
 	}
+}
+
+func (s *Scheduler) SetWhitelist(w *utils.Whitelist) {
+	s.whitelist = w
 }
 
 func (s *Scheduler) Start() error {

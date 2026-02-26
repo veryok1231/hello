@@ -20,6 +20,8 @@ type Config struct {
 	ProxyDetection   bool
 	DiscoveryOnly    bool
 	DiscoveryMethods []string
+	Whitelist        []string // 白名单IP列表
+	WhitelistFile    string   // 白名单文件路径
 }
 
 func (c *Config) ApplyDefaults() {
@@ -56,6 +58,7 @@ type ScanStatus struct {
 	StartTime    time.Time
 	EstimatedEnd time.Time
 	CurrentRate  int
+	SkippedIPs   int // 跳过的白名单IP数量
 }
 
 type ProxyAnalyzerConfig struct {

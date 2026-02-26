@@ -13,14 +13,19 @@ import (
 )
 
 type DiscoveryEngine struct {
-	config *Config
-	socket *network.RawSocket
+	config    *Config
+	socket    *network.RawSocket
+	whitelist *utils.Whitelist
 }
 
 func NewDiscoveryEngine(config *Config) *DiscoveryEngine {
 	return &DiscoveryEngine{
 		config: config,
 	}
+}
+
+func (d *DiscoveryEngine) SetWhitelist(w *utils.Whitelist) {
+	d.whitelist = w
 }
 
 func (d *DiscoveryEngine) Discover(ctx context.Context, targets []string) ([]data.HostInfo, error) {
@@ -36,6 +41,13 @@ func (d *DiscoveryEngine) Discover(ctx context.Context, targets []string) ([]dat
 	}
 
 	fmt.Printf("[INFO] 目标IP总数: %d\n", len(allIPs))
+
+	// 应用白名单过滤
+	var skippedIPs int
+	if d.whitelist != nil && d.whitelist.Size() > 0 {
+		allIPs, skippedIPs = d.whitelist.FilterIPs(allIPs)
+		fmt.Printf("[INFO] 白名单过滤: 跳过 %d 个IP, 剩余 %d 个IP\n", skippedIPs, len(allIPs))
+	}
 
 	if len(allIPs) == 0 {
 		return hosts, nil

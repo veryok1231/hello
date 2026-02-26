@@ -88,6 +88,8 @@ func initScanFlags() {
 	scanCmd.Flags().StringP("interface", "i", "", "网络接口")
 	scanCmd.Flags().Bool("service-detection", true, "是否进行服务识别")
 	scanCmd.Flags().Bool("proxy-detection", true, "是否进行代答检测")
+	scanCmd.Flags().StringSlice("whitelist", []string{}, "白名单IP/CIDR，跳过不扫描")
+	scanCmd.Flags().StringP("whitelist-file", "w", "", "白名单文件路径，每行一个IP或CIDR")
 }
 
 func initDiscoverFlags() {
@@ -99,6 +101,8 @@ func initDiscoverFlags() {
 	discoverCmd.Flags().StringP("format", "f", "txt", "输出格式 (txt/json/csv)")
 	discoverCmd.Flags().StringP("interface", "i", "", "网络接口")
 	discoverCmd.Flags().StringSlice("method", []string{"tcp"}, "发现方法 (icmp/tcp/arp)")
+	discoverCmd.Flags().StringSlice("whitelist", []string{}, "白名单IP/CIDR，跳过不扫描")
+	discoverCmd.Flags().StringP("whitelist-file", "w", "", "白名单文件路径")
 }
 
 func initAnalyzeFlags() {
@@ -152,6 +156,18 @@ func runScan(cmd *cobra.Command, args []string) {
 	iface, _ := cmd.Flags().GetString("interface")
 	serviceDetection, _ := cmd.Flags().GetBool("service-detection")
 	proxyDetection, _ := cmd.Flags().GetBool("proxy-detection")
+	whitelist, _ := cmd.Flags().GetStringSlice("whitelist")
+	whitelistFile, _ := cmd.Flags().GetString("whitelist-file")
+
+	// 加载白名单
+	whiteList, err := utils.LoadWhitelist(whitelist, whitelistFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] 加载白名单失败: %v\n", err)
+		os.Exit(1)
+	}
+	if whiteList.Size() > 0 {
+		fmt.Printf("[INFO] 白名单已加载: %d 条规则\n", whiteList.Size())
+	}
 
 	// 验证目标大小
 	maxIPs := 2 << 23
@@ -180,6 +196,7 @@ func runScan(cmd *cobra.Command, args []string) {
 	config.ApplyDefaults()
 
 	scheduler := engine.NewScheduler(config)
+	scheduler.SetWhitelist(whiteList)
 	if err := scheduler.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] 扫描失败: %v\n", err)
 		os.Exit(1)
@@ -199,6 +216,18 @@ func runDiscover(cmd *cobra.Command, args []string) {
 	format, _ := cmd.Flags().GetString("format")
 	iface, _ := cmd.Flags().GetString("interface")
 	methods, _ := cmd.Flags().GetStringSlice("method")
+	whitelist, _ := cmd.Flags().GetStringSlice("whitelist")
+	whitelistFile, _ := cmd.Flags().GetString("whitelist-file")
+
+	// 加载白名单
+	whiteList, err := utils.LoadWhitelist(whitelist, whitelistFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[ERROR] 加载白名单失败: %v\n", err)
+		os.Exit(1)
+	}
+	if whiteList.Size() > 0 {
+		fmt.Printf("[INFO] 白名单已加载: %d 条规则\n", whiteList.Size())
+	}
 
 	config = &engine.Config{
 		Targets:          targets,
@@ -213,6 +242,7 @@ func runDiscover(cmd *cobra.Command, args []string) {
 	config.ApplyDefaults()
 
 	discovery := engine.NewDiscoveryEngine(config)
+	discovery.SetWhitelist(whiteList)
 	if err := discovery.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] 主机发现失败: %v\n", err)
 		os.Exit(1)
