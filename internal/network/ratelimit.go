@@ -11,7 +11,13 @@ type RateLimiter struct {
 }
 
 func NewRateLimiter(pps int) *RateLimiter {
+	if pps <= 0 {
+		pps = 1000
+	}
 	interval := time.Second / time.Duration(pps)
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
 	return &RateLimiter{
 		interval: interval,
 		ticker:   time.NewTicker(interval),
@@ -20,18 +26,32 @@ func NewRateLimiter(pps int) *RateLimiter {
 }
 
 func (r *RateLimiter) Wait() {
+	if r.ticker == nil {
+		return
+	}
 	<-r.ticker.C
 }
 
 func (r *RateLimiter) SetRate(pps int) {
-	r.ticker.Stop()
+	if pps <= 0 {
+		return
+	}
+	if r.ticker != nil {
+		r.ticker.Stop()
+	}
 	r.interval = time.Second / time.Duration(pps)
 	r.ticker = time.NewTicker(r.interval)
 }
 
 func (r *RateLimiter) Stop() {
-	r.ticker.Stop()
-	close(r.stopCh)
+	if r.ticker != nil {
+		r.ticker.Stop()
+	}
+	select {
+	case <-r.stopCh:
+	default:
+		close(r.stopCh)
+	}
 }
 
 type TokenBucket struct {

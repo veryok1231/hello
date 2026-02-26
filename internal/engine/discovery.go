@@ -40,8 +40,15 @@ func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.
 
 	fmt.Printf("[INFO] 目标IP总数: %d\n", len(allIPs))
 
+	if len(allIPs) == 0 {
+		return hosts, nil
+	}
+
 	resultCh := make(chan data.HostInfo, 1000)
 	workerCount := d.config.Concurrency
+	if workerCount <= 0 {
+		workerCount = 10
+	}
 	if workerCount > 100 {
 		workerCount = 100
 	}
@@ -86,7 +93,7 @@ func (d *DiscoveryEngine) Discover(ctx context.Context, cidrs []string) ([]data.
 func (d *DiscoveryEngine) probeHost(ctx context.Context, ip net.IP) *data.HostInfo {
 	methods := d.config.DiscoveryMethods
 	if len(methods) == 0 {
-		methods = []string{"icmp"}
+		methods = []string{"icmp", "tcp"}
 	}
 
 	for _, method := range methods {

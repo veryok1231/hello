@@ -50,13 +50,8 @@ func NewRawSocket(interfaceName string) (*RawSocket, error) {
 		return nil, fmt.Errorf("无法获取源IP地址")
 	}
 
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
-	if err != nil {
-		return nil, fmt.Errorf("创建原始套接字失败: %w (需要root权限)", err)
-	}
-
 	return &RawSocket{
-		fd:    fd,
+		fd:    -1,
 		srcIP: srcIP,
 		iface: iface,
 	}, nil
@@ -93,15 +88,13 @@ type ARPResponse struct {
 }
 
 func SendICMPProbe(dstIP net.IP, timeout time.Duration) (*ICMPResponse, error) {
-	socket, err := NewRawSocket("")
-	if err != nil {
-		return nil, err
+	if os.Geteuid() != 0 {
+		return nil, fmt.Errorf("ICMP探测需要root权限")
 	}
-	defer socket.Close()
 
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
 	if err != nil {
-		return nil, fmt.Errorf("创建ICMP套接字失败: %w", err)
+		return nil, fmt.Errorf("创建ICMP套接字失败: %w (需要root权限)", err)
 	}
 	defer syscall.Close(fd)
 

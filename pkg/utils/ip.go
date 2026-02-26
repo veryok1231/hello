@@ -45,12 +45,19 @@ func incIP(ip net.IP) {
 }
 
 func ParsePortRange(portStr string) []int {
+	if portStr == "" {
+		portStr = "1-65535"
+	}
+
 	var ports []int
 	portMap := make(map[int]bool)
 
 	parts := strings.Split(portStr, ",")
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
 
 		if strings.Contains(part, "-") {
 			rangeParts := strings.Split(part, "-")
@@ -82,6 +89,10 @@ func ParsePortRange(portStr string) []int {
 				portMap[port] = true
 			}
 		}
+	}
+
+	if len(ports) == 0 {
+		ports = []int{80, 443, 22, 3389, 8080}
 	}
 
 	return ports

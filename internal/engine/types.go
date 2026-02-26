@@ -22,6 +22,27 @@ type Config struct {
 	DiscoveryMethods []string
 }
 
+func (c *Config) ApplyDefaults() {
+	if c.Rate <= 0 {
+		c.Rate = 10000
+	}
+	if c.Concurrency <= 0 {
+		c.Concurrency = 1000
+	}
+	if c.Timeout <= 0 {
+		c.Timeout = 3 * time.Second
+	}
+	if c.OutputFile == "" {
+		c.OutputFile = "result.json"
+	}
+	if c.OutputFormat == "" {
+		c.OutputFormat = "json"
+	}
+	if c.PortRange == "" {
+		c.PortRange = "1-65535"
+	}
+}
+
 type ScanTarget struct {
 	IP    net.IP
 	Ports []int
@@ -40,4 +61,13 @@ type ScanStatus struct {
 type ProxyAnalyzerConfig struct {
 	SubnetThreshold int
 	TTLThreshold    int
+}
+
+func (c *ProxyAnalyzerConfig) ApplyDefaults() {
+	if c.SubnetThreshold <= 0 {
+		c.SubnetThreshold = 254
+	}
+	if c.TTLThreshold <= 0 {
+		c.TTLThreshold = 3
+	}
 }
